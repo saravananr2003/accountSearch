@@ -10,7 +10,7 @@ from pyspark.sql.functions import lit
 
 # Flask app setup
 app = Flask(__name__)
-app.config['BASE_FOLDER'] = '/Users/ramsa005/PycharmProjects/accountSearch/datafiles/'
+app.config['BASE_FOLDER'] = '/Users/ramsa005/Desktop/Staples/Projects/Git/accountSearch/datafiles/'
 app.config['INCOMING_FOLDER'] = app.config['BASE_FOLDER'] + "incoming/"  # using a temporary directory
 app.config['TEMP_FOLDER'] = app.config['BASE_FOLDER'] + "temp/"
 app.config['OUTPUT_FOLDER'] = app.config['BASE_FOLDER'] + "output/"  # using a temporary directory
@@ -20,6 +20,7 @@ app.config['UPLOAD_FOLDER'] = tempfile.gettempdir()
 # spark = SparkSession.builder.appName("FileProcessingApp").getOrCreate()
 # spark.sparkContext.setLogLevel("ERROR")
 
+# All these are added
 
 # Replace these variables with your Snowflake credentials and config
 SNOWFLAKE_USER = 'YOUR_USERNAME'
