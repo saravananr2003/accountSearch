@@ -1,14 +1,11 @@
-import uuid
-import xml.etree.ElementTree as ET
-
-import requests
-import snowflake.connector
-from pyspark.sql import SparkSession
-from pyspark.sql.functions import lit, udf
 import os
 import sys
-
-from pyspark.sql.types import StringType, Row
+import uuid
+import xml.etree.ElementTree as ET
+from genmodule import get_address
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import udf
+from pyspark.sql.types import StringType
 
 # Remove the security manager setting that's causing problems
 os.environ['JAVA_TOOL_OPTIONS'] = '-Djavax.security.auth.useSubjectCredsOnly=true'
@@ -58,13 +55,8 @@ def process_file(pv_ID):
 	ldf_process.show(truncate=False)
 	print("DF Processed...")
 	df_processed.show(truncate=False)
+	df_processed.write.csv(dst_file, header=True, mode='overwrite')
 
-
-# ldf_processed.
-# df_processed.show(truncate=False)
-
-
-# ldf_process.write.option("header", True).csv(dst_file, mode="overwrite")
 
 def call_api_per_record(records):
 	import requests
@@ -214,10 +206,9 @@ def call_api_per_record(records):
 
 				# Address Response
 				address = person.find('.//ns4:Address', namespaces)
-				retval = get_address(address, addr_dataset, namespaces)
+				retval = genmodule.get_address(address, addr_dataset, namespaces)
 				for rc_val in addr_dataset:
-					rec = str(rc_val[0])
-					ld_record['STD_ORG_' + rec] = retval[rec]
+					ld_record['STD_ORG_' + str(rc_val[0])] = retval[str(rc_val[0])]
 
 				# Phone Response
 				ld_record['STD_PER_PHONE'] = str(person.find('ns3:Phone', namespaces).text or "")
@@ -247,22 +238,6 @@ def call_api_per_record(records):
 		yield ld_record
 
 
-def get_address(pd_addr, pd_dataset, pn_spaces):
-	ld_addr = {}
-	for rec in pd_dataset:
-		# print(rec[0], " _ ", rec[1])
-		ls_retattr = rec[0]
-		ls_attr = str(rec[1])
-		if rec[2] == 0:
-			ld_addr[ls_retattr] = str(pd_addr.find(f'ns4:{ls_attr}', pn_spaces).text or "")
-			ld_addr[ls_retattr + "_FAULT_CD"] = str(pd_addr.find(f'ns4:{ls_attr}', pn_spaces).get('FaultCode') or "")
-			ld_addr[ls_retattr + "_FAULT_DESC"] = str(pd_addr.find(f'ns4:{ls_attr}', pn_spaces).get('FaultDesc') or "")
-		else:
-			ld_addr[ls_retattr] = str(pd_addr.get(ls_attr) or "")
-
-	return ld_addr
-
-
 # def load_file_to_snowflake(file_path, file_name):
 # 	"""Uploads a file to a Snowflake stage and then loads its contents to a target table."""
 # 	conn = get_snowflake_connection()
@@ -289,7 +264,7 @@ def get_address(pd_addr, pd_dataset, pn_spaces):
 # 	finally:
 # 		conn.close()
 
-#
+
 # def get_snowflake_connection():
 # 	"""Return a Snowflake connection object."""
 # 	conn = snowflake.connector.connect(
