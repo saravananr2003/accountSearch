@@ -1,4 +1,5 @@
 import os
+import shutil
 import sys
 import uuid
 import xml.etree.ElementTree as ET
@@ -17,6 +18,8 @@ os.environ['PYSPARK_DRIVER_PYTHON'] = sys.executable
 # Create SparkSession without security manager flags
 spark = SparkSession.builder.appName("MyApp").master("local[*]").config("spark.driver.host", "localhost"). \
 	config("spark.sql.debug.maxToStringFields", 200).getOrCreate()
+
+print(f"Spark Session Created with Application ID: {spark.sparkContext.applicationId}")
 
 ID = "2679af12-d49a-4bcc-8a7a-ce32eb22b9d5"
 BASE_FOLDER = '/Users/ramsa005/Desktop/Staples/Projects/Git/accountSearch/datafiles/'
@@ -40,21 +43,23 @@ def generate_guid():
 	return str(uuid.uuid4())
 
 
-def process_file(pv_ID):
-	src_file = INCOMING_FOLDER + "BU_Bulk_Match_Input_2.0_Test.csv." + pv_ID
-	dst_file = PROCESS_FOLDER + "BU_Bulk_Match_Input_2.0_Test.csv." + pv_ID
+def process_file(pv_filename):
+	src_file = INCOMING_FOLDER + pv_filename
+	dst_file = PROCESS_FOLDER + pv_filename
 	print("Source File:", src_file)
 	print("Target File:", dst_file)
 	ldf_incoming = spark.read.csv(src_file, header=True, inferSchema=True)
-	ldf_process = ldf_incoming.withColumn("BU_REC_ID", uuid_udf()).fillna('')
+	ldf_process = ldf_incoming.withColumn("BU_REC_ID", udf_uuid()).fillna('')
 
 	ldf_processed = ldf_process.rdd.mapPartitions(call_api_per_record)
 	df_processed = spark.createDataFrame(ldf_processed)
 
-	print("LDF Processed...")
-	ldf_process.show(truncate=False)
-	print("DF Processed...")
+	print("Records with Rec ID, Address, Email, and Phone Standardization ...")
 	df_processed.show(truncate=False)
+
+	if os.path.exists(dst_file):
+		shutil.rmtree(dst_file)
+
 	df_processed.write.csv(dst_file, header=True, mode='overwrite')
 
 
@@ -64,6 +69,8 @@ def call_api_per_record(records):
 
 	headers = {"Content-Type": "text/xml; charset=utf-8", "SOAPAction": "service=cleanseAddress"}
 	for record in records:
+		ls_reqtype = 'ACCOUNT'
+
 		ps_bu_rec_id = record['BU_REC_ID']
 		ls_per_title = ""
 		ls_per_first_name = str(record['PER_FIRST_NAME'] or '')
@@ -80,7 +87,8 @@ def call_api_per_record(records):
 		ls_per_zip4 = str(record['PER_ZIP_SUPP'] or '')
 		ls_per_country = str(record['PER_COUNTRY'] or '')
 		ls_per_phone = str(record['PER_PHONE_NUMBER'] or '')
-		ps_email = str(record['PER_EMAIL'] or '')
+		ls_per_fax = str(record['PER_FAX_NUMBER'] or '')
+		ls_per_email = str(record['PER_EMAIL'] or '')
 
 		ls_org_name = str(record['ORG_NAME'] or '')
 		ls_org_addr1 = str(record['ORG_ADDRESS_LINE_1'] or '')
@@ -92,12 +100,10 @@ def call_api_per_record(records):
 		ls_org_zip4 = str(record['ORG_ZIP_SUPP'] or '')
 		ls_org_country = str(record['ORG_COUNTRY'] or '')
 		ls_org_phone = str(record['ORG_PHONE_NUMBER'] or '')
-		#
-		# PER_FAX_NUMBER,   , , , , , , ORG_FAX_NUMBER, ORG_WEBSITE
+		ls_org_fax = str(record['ORG_FAX_NUMBER'] or '')
+		ls_org_website = str(record['ORG_WEBSITE'] or '')
 
 		ls_soap_body = ""
-		ls_reqtype = 'ACCOUNT'
-
 		if len(ls_per_first_name) > 0:
 			ls_reqtype = 'CONTACT'
 			ls_soap_body = ("<soapenv:Envelope xmlns:soapenv='http://schemas.xmlsoap.org/soap/envelope/' "
@@ -117,7 +123,7 @@ def call_api_per_record(records):
 							f"                <add:LastNm>{ls_per_last_name}</add:LastNm> "
 							f"                <add:Prefx>{ls_per_prefix}</add:Prefx> "
 							f"                <add:Suffx>{ls_per_suffix}</add:Suffx>"
-							f"                <add:OrgNm>{ls_org_name}</add:OrgNm>"
+							f"                <add:OrgNm><![CDATA[{ls_org_name}]]></add:OrgNm>"
 							f"                <add1:Address id=''>"
 							f"                    <add1:AddrLine1>{ls_per_addr1}</add1:AddrLine1>"
 							f"                    <add1:AddrLine2>{ls_per_addr2}</add1:AddrLine2>"
@@ -130,7 +136,7 @@ def call_api_per_record(records):
 							f"                    <add1:AddrCountry>{ls_per_country}</add1:AddrCountry>"
 							f"                </add1:Address>"
 							f"            <phon:Phone PhExchange='' PhAreaCd=''>{ls_per_phone}</phon:Phone>"
-							f"            <ema:Email>{ps_email}</ema:Email> "
+							f"            <ema:Email>{ls_per_email}</ema:Email> "
 							f"            </add:Profile>"
 							f"        </add:CustAddrCleansing>"
 							f"    </soapenv:Body>"
@@ -148,7 +154,7 @@ def call_api_per_record(records):
 							f"            <head:Header> </head:Header>"
 							f'            <add:Profile Id="{ps_bu_rec_id}"> '
 							f"                <add:Title/><add:FirstNm/><add:MiddleNm/><add:LastNm/><add:Prefx/><add:Suffx/>"
-							f"                <add:OrgNm>{ls_org_name}</add:OrgNm>"
+							f"                <add:OrgNm><![CDATA[{ls_org_name}]]></add:OrgNm>"
 							f"                <add1:Address id=''>"
 							f"                    <add1:AddrLine1>{ls_org_addr1}</add1:AddrLine1>"
 							f"                    <add1:AddrLine2>{ls_org_addr2}</add1:AddrLine2>"
@@ -161,7 +167,6 @@ def call_api_per_record(records):
 							f"                    <add1:AddrCountry>{ls_org_country}</add1:AddrCountry>"
 							f"                </add1:Address>"
 							f"            <phon:Phone PhExchange='' PhAreaCd=''>{ls_org_phone}</phon:Phone>"
-							f"            <ema:Email>{ps_email}</ema:Email> "
 							f"            </add:Profile>"
 							f"        </add:CustAddrCleansing>"
 							f"    </soapenv:Body>"
@@ -184,7 +189,6 @@ def call_api_per_record(records):
 
 		# Check the response status code and print the response.
 		if response.status_code == 200:
-			# print(f"Success: Rec ID: {ps_bu_rec_id}")
 			root = ET.fromstring(response.text)
 			addr_dataset = [['ADDR1', 'AddrLine1', 0], ['ADDR2', 'AddrLine2', 0], ['COUNTY', 'AddrCounty', 0],
 							['CITY', 'AddrCity', 0], ['STATE', 'AddrState', 0], ['ZIP', 'AddrZip', 0],
@@ -193,11 +197,10 @@ def call_api_per_record(records):
 							['STREET_TYPE', 'AddrStreetTp', 0], ['DLVRY_POINT_CD', 'DeliveryPointCode', 0],
 							['ROUTE_CD', 'RouteCode', 0], ['CHECK_DIGIT', 'CheckDigit', 0], ['ELOT', 'ELot', 0],
 							['ELOT_ORDER', 'ELotOrder', 0], ['FAULT_CD', 'FaultCode', 1],
-							['FAULT_DESC', 'FaultDesc', 1],
-							['ADDR_TYPE', 'AddrType', 1], ['DPV_STATUS', 'DPV_Status', 1], ['CMRA_CD', 'DPV_CMRACd', 1],
-							['DPV_NOTE', 'DPV_Note', 1], ['ADDR_LOC_TYPE', 'AddrLocType', 1],
-							['RESIDENT_DLVRY_IND', 'DPV_RsdntlDlvryInd', 1]
-							]
+							['FAULT_DESC', 'FaultDesc', 1], ['ADDR_TYPE', 'AddrType', 1],
+							['DPV_STATUS', 'DPV_Status', 1], ['CMRA_CD', 'DPV_CMRACd', 1], ['DPV_NOTE', 'DPV_Note', 1],
+							['ADDR_LOC_TYPE', 'AddrLocType', 1],
+							['RESIDENT_DLVRY_IND', 'DPV_RsdntlDlvryInd', 1]]
 			person = root.find('.//ns1:Profile', namespaces)
 
 			if ls_reqtype == "ACCOUNT":
@@ -206,7 +209,7 @@ def call_api_per_record(records):
 
 				# Address Response
 				address = person.find('.//ns4:Address', namespaces)
-				retval = genmodule.get_address(address, addr_dataset, namespaces)
+				retval = get_address(address, addr_dataset, namespaces)
 				for rc_val in addr_dataset:
 					ld_record['STD_ORG_' + str(rc_val[0])] = retval[str(rc_val[0])]
 
@@ -234,7 +237,7 @@ def call_api_per_record(records):
 				# Phone Response
 				ld_record['STD_ORG_PHONE'] = (str(person.find('na3:Phone', namespaces).text) or "")
 		else:
-			print(f"Error:{ps_bu_rec_id} - Response : {response.status_code}")
+			print(f"Error:{ps_bu_rec_id}  - {ls_soap_body} - Response : {response.status_code}")
 		yield ld_record
 
 
@@ -278,7 +281,7 @@ def call_api_per_record(records):
 # 	return conn
 
 
-uuid_udf = udf(generate_guid, StringType())
-
-process_file(ID)
+udf_uuid = udf(generate_guid, StringType())
+file_name = "BU_Bulk_Match_Input_2.0_Test.csv." + ID
+process_file(file_name)
 spark.stop()
