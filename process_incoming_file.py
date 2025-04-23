@@ -3,6 +3,8 @@ import shutil
 import sys
 import uuid
 import xml.etree.ElementTree as ET
+
+import genmodule
 from genmodule import get_address
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import udf
@@ -19,7 +21,7 @@ os.environ['PYSPARK_DRIVER_PYTHON'] = sys.executable
 spark = SparkSession.builder.appName("MyApp").master("local[*]").config("spark.driver.host", "localhost"). \
 	config("spark.sql.debug.maxToStringFields", 200).getOrCreate()
 
-print(f"Spark Session Created with Application ID: {spark.sparkContext.applicationId}")
+genmodule.logger("INFO", f"Spark Session Created with Application ID: {spark.sparkContext.applicationId}")
 
 ID = "2679af12-d49a-4bcc-8a7a-ce32eb22b9d5"
 BASE_FOLDER = '/Users/ramsa005/Desktop/Staples/Projects/Git/accountSearch/datafiles/'
@@ -46,21 +48,25 @@ def generate_guid():
 def process_file(pv_filename):
 	src_file = INCOMING_FOLDER + pv_filename
 	dst_file = PROCESS_FOLDER + pv_filename
-	print("Source File:", src_file)
-	print("Target File:", dst_file)
+	genmodule.logger("INFO",f"Source File: {src_file}")
+	genmodule.logger("INFO",f"Target File: {dst_file}")
+
 	ldf_incoming = spark.read.csv(src_file, header=True, inferSchema=True)
 	ldf_process = ldf_incoming.withColumn("BU_REC_ID", udf_uuid()).fillna('')
 
 	ldf_processed = ldf_process.rdd.mapPartitions(call_api_per_record)
-	df_processed = spark.createDataFrame(ldf_processed)
+	df_process = spark.createDataFrame(ldf_processed)
+	df_processed = df_process.limit(300)
 
-	print("Records with Rec ID, Address, Email, and Phone Standardization ...")
+	genmodule.logger("INFO", "Records with Rec ID, Address, Email, and Phone Standardization ...")
 	df_processed.show(truncate=False)
 
 	if os.path.exists(dst_file):
 		shutil.rmtree(dst_file)
+	genmodule.logger("INFO", "Removed Existing Directory, Starting to populate output file in process folder...")
 
 	df_processed.write.csv(dst_file, header=True, mode='overwrite')
+	genmodule.logger("INFO", "Output file written on Process folder...")
 
 
 def call_api_per_record(records):
@@ -214,7 +220,8 @@ def call_api_per_record(records):
 					ld_record['STD_ORG_' + str(rc_val[0])] = retval[str(rc_val[0])]
 
 				# Phone Response
-				ld_record['STD_PER_PHONE'] = str(person.find('ns3:Phone', namespaces).text or "")
+				ld_record['STD_ORG_PHONE'] = str(person.find('ns3:Phone', namespaces).text or "")
+				ld_record['STD_ORG_AREACD'] = str(person.find('ns3:Phone', namespaces).get('PhAreaCd') or "")
 			else:
 				# print(response.text)
 				person = root.find('.//ns1:Profile', namespaces)
@@ -230,14 +237,16 @@ def call_api_per_record(records):
 				retval = get_address(address, addr_dataset, namespaces)
 				for rc_val in addr_dataset:
 					rec = str(rc_val[0])
-					ld_record['STD_ORG_' + rec] = retval[rec]
-					ld_record['STD_ORG_' + rec + '_FAULT_CD'] = retval[rec + '_FAULT_CD']
-					ld_record['STD_ORG_' + rec + '_FAULT_DESC'] = retval[rec + '_FAULT_DESC']
+					ld_record['STD_PER_' + rec] = retval[rec]
+					ld_record['STD_PER_' + rec + '_FAULT_CD'] = retval[rec + '_FAULT_CD']
+					ld_record['STD_PER_' + rec + '_FAULT_DESC'] = retval[rec + '_FAULT_DESC']
 
 				# Phone Response
-				ld_record['STD_ORG_PHONE'] = (str(person.find('na3:Phone', namespaces).text) or "")
+				ld_record['STD_PER_PHONE'] = (str(person.find('na3:Phone', namespaces).text) or "")
+				ld_record['STD_PER_AREACD'] = str(person.find('ns3:Phone', namespaces).get('PhAreaCd') or "")
+
 		else:
-			print(f"Error:{ps_bu_rec_id}  - {ls_soap_body} - Response : {response.status_code}")
+			genmodule.logger("ERROR", f"{ps_bu_rec_id}  - {ls_soap_body} - Response : {response.status_code}")
 		yield ld_record
 
 
