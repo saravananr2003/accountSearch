@@ -1,6 +1,5 @@
 import configparser
 import json
-import logging
 import os
 import shutil
 import sys
@@ -15,9 +14,9 @@ import genmodule
 # Setup
 config = genmodule.read_config()
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+# logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
-# Initialize Spark
+# # Initialize Spark
 spark = SparkSession.builder \
 	.appName("TamrProcessing") \
 	.master("local[*]") \
@@ -32,27 +31,24 @@ FOLDERS = {
 	'output': str(os.path.join(config['FOLDER']['BASE_FOLDER'], config['FOLDER']['OUTPUT_FOLDER']))
 }
 
-# Set the environment variable for Java and pyspark options
-# Remove the security manager setting that's causing problems
-os.environ['JAVA_TOOL_OPTIONS'] = '-Djavax.security.auth.useSubjectCredsOnly=true'
-os.environ['PYSPARK_PYTHON'] = sys.executable
-os.environ['PYSPARK_DRIVER_PYTHON'] = sys.executable
 
+# # Set the environment variable for Java and pyspark options
+# # Remove the security manager setting that's causing problems
+# os.environ['JAVA_TOOL_OPTIONS'] = '-Djavax.security.auth.useSubjectCredsOnly=true'
+# os.environ['PYSPARK_PYTHON'] = sys.executable
+# os.environ['PYSPARK_DRIVER_PYTHON'] = sys.executable
+#
 
-
-logging.info(f"Spark Session Created with Application ID: {spark.sparkContext.applicationId}")
-
-
-def generate_guid():
-	return str(uuid.uuid4())
-
+#
+# logging.info(f"Spark Session Created with Application ID: {spark.sparkContext.applicationId}")
+#
 
 def process_tamr(pv_filename):
 	src_file = os.path.join(FOLDERS['process'], pv_filename)
 	dst_file = os.path.join(FOLDERS['output'], pv_filename)
 
-	logging.info("Starting to process Source File: {src_file} to Target File: {dst_file}")
-	ldf_incoming = spark.read.csv(src_file, header=True, inferSchema=True)
+	genmodule.logger("INFO", "Starting to process Source File: {src_file} to Target File: {dst_file}")
+	ldf_incoming = spark.read.csv(src_file, header=True, inferSchema=True).limit(50)
 	ldf_process = ldf_incoming.withColumn("STD_ORG_ZIP9",
 										  concat_ws("-", col("STD_ORG_ZIP_CODE"), col("STD_ORG_ZIP_SUPP"))) \
 		.fillna('') \
@@ -61,32 +57,34 @@ def process_tamr(pv_filename):
 	ldf_processed = ldf_process.rdd.mapPartitions(call_tamr_api)
 	df_processed = spark.createDataFrame(ldf_processed).repartition(1)
 
-	logging.info("Records with Rec ID, Address, Email, and Phone Standardization ...")
+	genmodule.logger("INFO", "Records with Rec ID, Address, Email, and Phone Standardization ...")
 	df_processed.show(truncate=False)
 
 	if os.path.exists(dst_file):
 		shutil.rmtree(dst_file)
 
-	logging.info("Removed Existing Directory, Starting to populate output file in output folder...")
+	genmodule.logger("INFO", "Removed Existing Directory, Starting to populate output file in output folder...")
 	df_processed.write.csv(dst_file, header=True, mode='overwrite')
-	logging.info("Output file written on Output folder...")
+	genmodule.logger("INFO", "Output file written on Output folder...")
 
 
 def call_tamr_api(records):
 	base_url = config['TAMR']['ACCOUNTS_MATCH_API_URL']
+	base_url = 'https://staples-prod-2.tamrfield.com/llm/api/v1/projects/2-B Site Mastering v2:match?type=clusters'
 
 	headers = {"Content-Type": "application/json", "Accept": "application/json",
 			   "Authorization": config['TAMR']['ACCOUNTS_MATCH_API_TOKEN']}
+
 	cluster_ids = []
 	avg_match_probs = []
 	for record in records:
 		payload = create_api_payload(record)
-		logging.info(f"Processing Rec ID: {record['BU_REC_ID']}")
+		# genmodule.logger("INFO",f"Processing Rec ID: {record['BU_REC_ID']}")
 		ld_dict = {}
 		try:
 			response = requests.post(base_url, headers=headers, json=payload, timeout=30)
 		except requests.exceptions.RequestException as e:
-			logging.error(f"Request failed: {e}")
+			genmodule.logger("ERROR", "Request failed: {e}")
 			continue
 
 		if response.status_code == 200:
@@ -99,7 +97,7 @@ def call_tamr_api(records):
 				base["ORG_MATCH_CONFIDENCE"] = d.get("avgMatchProb")
 				yield Row(**base)
 		else:
-			logging.error(f"Error: {response.status_code} - {response.text}")
+			genmodule.logger("ERROR", f"Error: {response.status_code} - {response.text}")
 			continue
 
 
@@ -142,8 +140,7 @@ def create_api_payload(lr_row):
 	return payload
 
 
-# Register the UDF
-udf_uuid = udf(generate_guid, StringType())
+
 ID = config['DEFAULT']['ID']
 file_name = "BU_Bulk_Match_BASE_ADDRESS_INPUT_250415.csv." + ID
 process_tamr(file_name)

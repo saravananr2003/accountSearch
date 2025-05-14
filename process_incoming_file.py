@@ -132,8 +132,7 @@ def standardize_data(pv_filename):
 	src_file = os.path.join(FOLDERS['incoming'], pv_filename)
 	dst_file = os.path.join(FOLDERS['process'], pv_filename)
 
-	genmodule.logger("INFO", f"Source File: {src_file}")
-	genmodule.logger("INFO", f"Target File: {dst_file}")
+	genmodule.logger("INFO", f"Source File: {src_file}, Target File: {dst_file}")
 	ld_created_date = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 	ls_user_name = os.getlogin()
 
@@ -166,7 +165,5 @@ ID = config['DEFAULT']['ID']
 file_name = "BU_Bulk_Match_BASE_ADDRESS_INPUT_250415.csv." + ID
 standardize_data(file_name)
 genmodule.logger("INFO", "Standardization Process Completed...")
-genmodule.logger("INFO", "Starting to process the file with Tamr LLM...")
-process_tamr_llm.process_tamr(file_name)
-genmodule.logger("INFO", "Tamr LLM Process Completed...")
+
 spark.stop()
