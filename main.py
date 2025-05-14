@@ -6,8 +6,9 @@ import uuid
 
 from flask import Flask, request, redirect, url_for, render_template_string
 
-config = configparser.ConfigParser()
-config.read('config.properties')
+import genmodule
+
+config = genmodule.read_config()
 
 # Flask app setup
 app = Flask(__name__)

@@ -10,9 +10,10 @@ from pyspark.sql import SparkSession
 from pyspark.sql.functions import udf, concat_ws, col
 from pyspark.sql.types import StringType, Row
 
+import genmodule
+
 # Setup
-config = configparser.ConfigParser()
-config.read('config.properties')
+config = genmodule.read_config()
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
@@ -26,9 +27,9 @@ spark = SparkSession.builder \
 
 # Paths
 FOLDERS = {
-	'base': config['FOLDER']['BASE_FOLDER'],
-	'process': os.path.join(config['FOLDER']['BASE_FOLDER'], config['FOLDER']['PROCESS_FOLDER']),
-	'output': os.path.join(config['FOLDER']['BASE_FOLDER'], config['FOLDER']['OUTPUT_FOLDER'])
+	'base': str(config['FOLDER']['BASE_FOLDER']),
+	'process': str(os.path.join(config['FOLDER']['BASE_FOLDER'], config['FOLDER']['PROCESS_FOLDER'])),
+	'output': str(os.path.join(config['FOLDER']['BASE_FOLDER'], config['FOLDER']['OUTPUT_FOLDER']))
 }
 
 # Set the environment variable for Java and pyspark options
@@ -144,6 +145,6 @@ def create_api_payload(lr_row):
 # Register the UDF
 udf_uuid = udf(generate_guid, StringType())
 ID = config['DEFAULT']['ID']
-file_name = "BU_Bulk_Match_Input_2.0_Test.csv." + ID
+file_name = "BU_Bulk_Match_BASE_ADDRESS_INPUT_250415.csv." + ID
 process_tamr(file_name)
 spark.stop()
