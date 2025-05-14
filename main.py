@@ -6,19 +6,25 @@ import uuid
 
 from flask import Flask, request, redirect, url_for, render_template_string
 
-
 config = configparser.ConfigParser()
 config.read('config.properties')
 
 # Flask app setup
 app = Flask(__name__)
-app.config['BASE_FOLDER'] = config['DEFAULT']['BASE_FOLDER']
-app.config['INCOMING_FOLDER'] = os.path.join(app.config['BASE_FOLDER'], config['DEFAULT']['INCOMING_FOLDER'])
-app.config['TEMP_FOLDER'] = os.path.join(app.config['BASE_FOLDER'], config['DEFAULT']['TEMP_FOLDER'])
-app.config['OUTPUT_FOLDER'] = os.path.join(app.config['BASE_FOLDER'], config['DEFAULT']['OUTPUT_FOLDER'])
-app.config['PROCESS_FOLDER'] = os.path.join(app.config['BASE_FOLDER'], config['DEFAULT']['PROCESS_FOLDER'])
-app.config['UPLOAD_FOLDER'] = tempfile.gettempdir()
+BASE_FOLDER = config['FOLDER']['BASE_FOLDER']
+FOLDERS = {
+	'incoming': os.path.join(BASE_FOLDER, config['FOLDER']['INCOMING_FOLDER']),
+	'process': os.path.join(BASE_FOLDER, config['FOLDER']['PROCESS_FOLDER']),
+	'output': os.path.join(BASE_FOLDER, config['FOLDER']['OUTPUT_FOLDER']),
+	'temp': os.path.join(BASE_FOLDER, config['FOLDER']['TEMP_FOLDER'])
+}
 
+app.config['BASE_FOLDER'] = BASE_FOLDER
+app.config['INCOMING_FOLDER'] = os.path.join(BASE_FOLDER, FOLDERS['incoming'])
+app.config['TEMP_FOLDER'] = os.path.join(BASE_FOLDER, FOLDERS['temp'])
+app.config['OUTPUT_FOLDER'] = os.path.join(BASE_FOLDER, FOLDERS['output'])
+app.config['PROCESS_FOLDER'] = os.path.join(BASE_FOLDER, FOLDERS['process'])
+app.config['UPLOAD_FOLDER'] = tempfile.gettempdir()
 
 # A simple upload form
 UPLOAD_FORM = """
@@ -34,7 +40,6 @@ UPLOAD_FORM = """
 	<input type=submit value=Process>
 </form>
 """
-
 
 
 @app.route('/', methods=['GET', 'POST'])
@@ -62,18 +67,19 @@ def upload_file():
 
 		return message_key
 
-		# Load the file into Snowflake
-		# try:
-		# 	load_file_to_snowflake(temp_file_path, file.filename)
-		# 	message = "File successfully loaded to Snowflake."
-		# except Exception as e:
-		# 	message = f"An error occurred: {e}"
-		# finally:
-		# 	# Optionally, delete the temporary file
-		# 	os.remove(temp_file_path)
+	# Load the file into Snowflake
+	# try:
+	# 	load_file_to_snowflake(temp_file_path, file.filename)
+	# 	message = "File successfully loaded to Snowflake."
+	# except Exception as e:
+	# 	message = f"An error occurred: {e}"
+	# finally:
+	# 	# Optionally, delete the temporary file
+	# 	os.remove(temp_file_path)
 
-		# return message
+	# return message
 	return render_template_string(UPLOAD_FORM)
+
 
 @app.route('/process', methods=['POST'])
 def load_file_to_incoming(pv_src_file, pv_dst_file):

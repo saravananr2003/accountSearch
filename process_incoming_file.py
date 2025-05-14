@@ -10,41 +10,33 @@ from pyspark.sql.functions import udf, col, lit
 from pyspark.sql.types import StringType
 
 import genmodule
-from genmodule import get_address
 
+# Read config and setup environment
 config = configparser.ConfigParser()
 config.read('config.properties')
 
-# Environment setup
 os.environ['JAVA_TOOL_OPTIONS'] = '-Djavax.security.auth.useSubjectCredsOnly=true'
 os.environ['PYSPARK_PYTHON'] = sys.executable
 os.environ['PYSPARK_DRIVER_PYTHON'] = sys.executable
 
-# Create SparkSession without security manager flags
+# Initialize Spark
 spark = SparkSession.builder \
-	.appName("MyApp") \
+	.appName("AddressStandardization") \
 	.master("local[*]") \
 	.config("spark.driver.host", "localhost") \
 	.config("spark.sql.debug.maxToStringFields", 200) \
 	.getOrCreate()
 
-genmodule.logger("INFO", f"Spark Session Created with Application ID: {spark.sparkContext.applicationId}")
-
-ID = config['DEFAULT']['ID']
+# Load configs
 BASE_FOLDER = config['FOLDER']['BASE_FOLDER']
-INCOMING_FOLDER = os.path.join(BASE_FOLDER, config['FOLDER']['INCOMING_FOLDER'])
-TEMP_FOLDER = os.path.join(BASE_FOLDER, config['FOLDER']['TEMP_FOLDER'])
-OUTPUT_FOLDER = os.path.join(BASE_FOLDER, config['FOLDER']['OUTPUT_FOLDER'])
-PROCESS_FOLDER = os.path.join(BASE_FOLDER, config['FOLDER']['PROCESS_FOLDER'])
+FOLDERS = {
+	'incoming': os.path.join(BASE_FOLDER, config['FOLDER']['INCOMING_FOLDER']),
+	'process': os.path.join(BASE_FOLDER, config['FOLDER']['PROCESS_FOLDER']),
+	'output': os.path.join(BASE_FOLDER, config['FOLDER']['OUTPUT_FOLDER']),
+	'temp': os.path.join(BASE_FOLDER, config['FOLDER']['TEMP_FOLDER'])
+}
 
-SNOWFLAKE_USER = config['DATABASE']['SNOWFLAKE_USER']
-SNOWFLAKE_PASSWORD = config['DATABASE']['SNOWFLAKE_PASSWORD']
-SNOWFLAKE_ACCOUNT = config['DATABASE']['SNOWFLAKE_ACCOUNT']
-SNOWFLAKE_WAREHOUSE = config['DATABASE']['SNOWFLAKE_WAREHOUSE']
-SNOWFLAKE_DATABASE = config['DATABASE']['SNOWFLAKE_DATABASE']
-SNOWFLAKE_SCHEMA = config['DATABASE']['SNOWFLAKE_SCHEMA']
-SNOWFLAKE_STAGE = config['DATABASE']['SNOWFLAKE_STAGE']
-TARGET_TABLE = config['DATABASE']['TARGET_TABLE']
+genmodule.logger("INFO", f"Spark Session Created with Application ID: {spark.sparkContext.applicationId}")
 
 # Replace these variables with your Snowflake credentials and config
 
@@ -138,8 +130,9 @@ print(output_data)
 
 
 def process_file(pv_filename):
-	src_file = INCOMING_FOLDER + pv_filename
-	dst_file = PROCESS_FOLDER + pv_filename
+	src_file = os.path.join(FOLDERS['incoming'], pv_filename)
+	dst_file = os.path.join(FOLDERS['process'], pv_filename)
+
 	genmodule.logger("INFO", f"Source File: {src_file}")
 	genmodule.logger("INFO", f"Target File: {dst_file}")
 	ld_created_date = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -153,7 +146,7 @@ def process_file(pv_filename):
 				   .withColumn("LAST_UPDATED_USER", lit(ls_user_name))
 				   .fillna(''))
 
-	ldf_processed = ldf_process.rdd.mapPartitions(call_api_per_record)
+	ldf_processed = ldf_process.rdd.mapPartitions(standardize_records)
 	df_process = spark.createDataFrame(ldf_processed)
 	df_processed = df_process
 
@@ -169,7 +162,7 @@ def process_file(pv_filename):
 	genmodule.logger("INFO", "Output file written on Process folder...")
 
 
-def call_api_per_record(records):
+def standardize_records(records):
 	import requests
 	base_url = config['SOAP']['URL_ECH_CLEANSER']
 
@@ -316,7 +309,7 @@ def call_api_per_record(records):
 
 				# Address Response
 				address = person.find('.//ns4:Address', namespaces)
-				retval = get_address(address, addr_dataset, namespaces)
+				retval = genmodule.get_address(address, addr_dataset, namespaces)
 				for rc_val in addr_dataset:
 					ld_record['STD_ORG_' + str(rc_val[0])] = retval[str(rc_val[0])]
 
@@ -335,7 +328,7 @@ def call_api_per_record(records):
 
 				# Address Response
 				address = person.find('.//ns4:Address', namespaces)
-				retval = get_address(address, addr_dataset, namespaces)
+				retval = genmodule.get_address(address, addr_dataset, namespaces)
 				for rc_val in addr_dataset:
 					rec = str(rc_val[0])
 					ld_record['STD_PER_' + rec] = retval[rec]
@@ -351,46 +344,9 @@ def call_api_per_record(records):
 		yield ld_record
 
 
-# def load_file_to_snowflake(file_path, file_name):
-# 	"""Uploads a file to a Snowflake stage and then loads its contents to a target table."""
-# 	conn = get_snowflake_connection()
-# 	try:
-# 		cs = conn.cursor()
-# 		try:
-# 			# 1. Upload the file to a Snowflake stage using PUT command.
-# 			# The file path is local to the server where the Python process is running.
-# 			put_command = f"PUT file://{file_path} {SNOWFLAKE_STAGE} AUTO_COMPRESS=TRUE"
-# 			cs.execute(put_command)
-# 			print("File uploaded to stage successfully.")
-#
-# 			# 2. Load the staged file into the target table using COPY INTO.
-# 			# Adjust file format options based on your CSV structure, headers, delimiters etc.
-# 			copy_command = f"""
-#             COPY INTO {TARGET_TABLE}
-#             FROM {SNOWFLAKE_STAGE}/{file_name}.gz
-#             FILE_FORMAT = (TYPE = 'CSV', FIELD_OPTIONALLY_ENCLOSED_BY = '\"', SKIP_HEADER = 1)
-#             """
-# 			cs.execute(copy_command)
-# 			print("Data loaded into table successfully.")
-# 		finally:
-# 			cs.close()
-# 	finally:
-# 		conn.close()
-
-
-# def get_snowflake_connection():
-# 	"""Return a Snowflake connection object."""
-# 	conn = snowflake.connector.connect(
-# 		user=SNOWFLAKE_USER,
-# 		password=SNOWFLAKE_PASSWORD,
-# 		account=SNOWFLAKE_ACCOUNT,
-# 		warehouse=SNOWFLAKE_WAREHOUSE,
-# 		database=SNOWFLAKE_DATABASE,
-# 		schema=SNOWFLAKE_SCHEMA
-# 	)
-# 	return conn
-
 udf_uuid = udf(genmodule.generate_guid, StringType())
-file_name = "BU_Bulk_Match_Input_2.0_Test.csv." + ID
+ID = config['DEFAULT']['ID']
+file_name = "BU_Bulk_Match_BASE­_ADDRESS_INPUT_250415.csv." + ID
 process_file(file_name)
 spark.stop()
+

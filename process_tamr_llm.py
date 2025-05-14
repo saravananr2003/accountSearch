@@ -1,20 +1,35 @@
 import configparser
+import json
 import logging
 import os
 import shutil
 import sys
 import uuid
-import json
-import genmodule
+import requests
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import udf, concat_ws, col
 from pyspark.sql.types import StringType, Row
 
+# Setup
 config = configparser.ConfigParser()
 config.read('config.properties')
 
-# Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+
+# Initialize Spark
+spark = SparkSession.builder \
+	.appName("TamrProcessing") \
+	.master("local[*]") \
+	.config("spark.driver.host", "localhost") \
+	.config("spark.sql.debug.maxToStringFields", 200) \
+	.getOrCreate()
+
+# Paths
+FOLDERS = {
+	'base': config['FOLDER']['BASE_FOLDER'],
+	'process': os.path.join(config['FOLDER']['BASE_FOLDER'], config['FOLDER']['PROCESS_FOLDER']),
+	'output': os.path.join(config['FOLDER']['BASE_FOLDER'], config['FOLDER']['OUTPUT_FOLDER'])
+}
 
 # Set the environment variable for Java and pyspark options
 # Remove the security manager setting that's causing problems
@@ -22,16 +37,7 @@ os.environ['JAVA_TOOL_OPTIONS'] = '-Djavax.security.auth.useSubjectCredsOnly=tru
 os.environ['PYSPARK_PYTHON'] = sys.executable
 os.environ['PYSPARK_DRIVER_PYTHON'] = sys.executable
 
-ID = config['DEFAULT']['ID']
-BASE_FOLDER = config['FOLDER']['BASE_FOLDER']
-INCOMING_FOLDER = os.path.join(BASE_FOLDER, config['FOLDER']['INCOMING_FOLDER'])
-TEMP_FOLDER = os.path.join(BASE_FOLDER, config['FOLDER']['TEMP_FOLDER'])
-OUTPUT_FOLDER = os.path.join(BASE_FOLDER, config['FOLDER']['OUTPUT_FOLDER'])
-PROCESS_FOLDER = os.path.join(BASE_FOLDER, config['FOLDER']['PROCESS_FOLDER'])
 
-# Create SparkSession without security manager flags
-spark = SparkSession.builder.appName("MyApp").master("local[*]").config("spark.driver.host", "localhost"). \
-	config("spark.sql.debug.maxToStringFields", 200).getOrCreate()
 
 logging.info(f"Spark Session Created with Application ID: {spark.sparkContext.applicationId}")
 
@@ -41,17 +47,17 @@ def generate_guid():
 
 
 def process_tamr(pv_filename):
-	src_file = PROCESS_FOLDER + pv_filename
-	dst_file = OUTPUT_FOLDER + pv_filename
-	logging.info(f"Source File: {src_file}")
-	logging.info(f"Target File: {dst_file}")
-	logging.info("Starting to process the file...")
+	src_file = os.path.join(FOLDERS['process'], pv_filename)
+	dst_file = os.path.join(FOLDERS['output'], pv_filename)
+
+	logging.info("Starting to process Source File: {src_file} to Target File: {dst_file}")
 	ldf_incoming = spark.read.csv(src_file, header=True, inferSchema=True)
 	ldf_process = ldf_incoming.withColumn("STD_ORG_ZIP9",
 										  concat_ws("-", col("STD_ORG_ZIP_CODE"), col("STD_ORG_ZIP_SUPP"))) \
-		.fillna('').repartition(10)
+		.fillna('') \
+		.repartition(10)
 
-	ldf_processed = ldf_process.rdd.mapPartitions(call_api_per_record)
+	ldf_processed = ldf_process.rdd.mapPartitions(call_tamr_api)
 	df_processed = spark.createDataFrame(ldf_processed).repartition(1)
 
 	logging.info("Records with Rec ID, Address, Email, and Phone Standardization ...")
@@ -61,13 +67,11 @@ def process_tamr(pv_filename):
 		shutil.rmtree(dst_file)
 
 	logging.info("Removed Existing Directory, Starting to populate output file in output folder...")
-
 	df_processed.write.csv(dst_file, header=True, mode='overwrite')
 	logging.info("Output file written on Output folder...")
 
 
-def call_api_per_record(records):
-	import requests
+def call_tamr_api(records):
 	base_url = config['TAMR']['ACCOUNTS_MATCH_API_URL']
 
 	headers = {"Content-Type": "application/json", "Accept": "application/json",
@@ -75,42 +79,8 @@ def call_api_per_record(records):
 	cluster_ids = []
 	avg_match_probs = []
 	for record in records:
-		ls_rec_id = str(record['BU_REC_ID'])
-		ls_org_name = str(record['STD_ORG_NAME']).upper()
-		ls_org_zip = str(record['STD_ORG_ZIP_CODE'])
-		ls_org_zip4 = str(record['STD_ORG_ZIP_SUPP'])
-		ls_org_phone = str(record['STD_ORG_PHONE_NUMBER'])
-		ls_org_areacd = str(record['STD_ORG_AREACD'])
-		payload = {
-			"recordId": f"{ls_rec_id}",
-			"record": {
-				"site_address_1": [f"{record['STD_ORG_ADDRESS_LINE_1']}"],
-				"site_address_2": [f"{record['STD_ORG_ADDRESS_LINE_2']}"],
-				"site_address_full": [f"{record['STD_ORG_ADDRESS_LINE_1']} {record['STD_ORG_ADDRESS_LINE_2']}"],
-				"site_city": [f"{record['STD_ORG_CITY']}"],
-				"site_country": [f"{record['STD_ORG_COUNTRY']}"],
-				"site_zip5": [f"{ls_org_zip}"],
-				"site_zip9": [f"{ls_org_zip}-{ls_org_zip4}"],
-				"site_phone_7": [f"{ls_org_phone[:7]}"],
-				"site_phone_areacode": [f"{ls_org_areacd}"],
-				"site_state": [f"{record['STD_ORG_STATE']}"],
-				"site_fax": None,
-				"business_name": [f"{ls_org_name}"],
-				"original_source_and_ID": [f"{record['SRC_TP_CD']}:::{record['SRC_ID']}"],
-				"site_zip4": [f"{ls_org_zip4}"],
-				"phone_number_most_frequent": [f"{ls_org_phone}"],
-				"site_phone_full_number": [f"{ls_org_phone}"],
-				"EMAIL": None,
-				"site_phone_number_10dig": [f"{ls_org_phone}"],
-				"COMPANY_NAME": [f"{ls_org_phone}"],
-				"site_phone_6": [f"{ls_org_phone[:6]}"],
-				"ml_company_name": [f"{ls_org_name.replace(' ', '')}"],
-				"ml_company_first_word": [f"{ls_org_name.split()[0]}"],
-				"site_address_1_original": [f"{record['STD_ORG_ADDRESS_LINE_1']}"],
-				"business_name_gr": [f"{ls_org_name}"]
-			}
-		}
-		logging.info(f"Processing Rec ID: {ls_rec_id}")
+		payload = create_api_payload(record)
+		logging.info(f"Processing Rec ID: {record['BU_REC_ID']}")
 		ld_dict = {}
 		try:
 			response = requests.post(base_url, headers=headers, json=payload, timeout=30)
@@ -132,8 +102,48 @@ def call_api_per_record(records):
 			continue
 
 
+def create_api_payload(lr_row):
+	ls_rec_id = str(lr_row['BU_REC_ID'])
+	ls_org_name = str(lr_row['STD_ORG_NAME']).upper()
+	ls_org_zip = str(lr_row['STD_ORG_ZIP_CODE'])
+	ls_org_zip4 = str(lr_row['STD_ORG_ZIP_SUPP'])
+	ls_org_phone = str(lr_row['STD_ORG_PHONE_NUMBER'])
+	ls_org_areacd = str(lr_row['STD_ORG_AREACD'])
+	payload = {
+		"recordId": f"{ls_rec_id}",
+		"record": {
+			"site_address_1": [f"{lr_row['STD_ORG_ADDRESS_LINE_1']}"],
+			"site_address_2": [f"{lr_row['STD_ORG_ADDRESS_LINE_2']}"],
+			"site_address_full": [f"{lr_row['STD_ORG_ADDRESS_LINE_1']} {lr_row['STD_ORG_ADDRESS_LINE_2']}"],
+			"site_city": [f"{lr_row['STD_ORG_CITY']}"],
+			"site_country": [f"{lr_row['STD_ORG_COUNTRY']}"],
+			"site_zip5": [f"{ls_org_zip}"],
+			"site_zip9": [f"{ls_org_zip}-{ls_org_zip4}"],
+			"site_phone_7": [f"{ls_org_phone[:7]}"],
+			"site_phone_areacode": [f"{ls_org_areacd}"],
+			"site_state": [f"{lr_row['STD_ORG_STATE']}"],
+			"site_fax": None,
+			"business_name": [f"{ls_org_name}"],
+			"original_source_and_ID": [f"{lr_row['SRC_TP_CD']}:::{lr_row['SRC_ID']}"],
+			"site_zip4": [f"{ls_org_zip4}"],
+			"phone_number_most_frequent": [f"{ls_org_phone}"],
+			"site_phone_full_number": [f"{ls_org_phone}"],
+			"EMAIL": None,
+			"site_phone_number_10dig": [f"{ls_org_phone}"],
+			"COMPANY_NAME": [f"{ls_org_phone}"],
+			"site_phone_6": [f"{ls_org_phone[:6]}"],
+			"ml_company_name": [f"{ls_org_name.replace(' ', '')}"],
+			"ml_company_first_word": [f"{ls_org_name.split()[0]}"],
+			"site_address_1_original": [f"{lr_row['STD_ORG_ADDRESS_LINE_1']}"],
+			"business_name_gr": [f"{ls_org_name}"]
+		}
+	}
+	return payload
+
+
 # Register the UDF
 udf_uuid = udf(generate_guid, StringType())
+ID = config['DEFAULT']['ID']
 file_name = "BU_Bulk_Match_Input_2.0_Test.csv." + ID
 process_tamr(file_name)
 spark.stop()
