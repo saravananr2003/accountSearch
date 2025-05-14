@@ -1,65 +1,165 @@
+import configparser
+import datetime
 import os
 import shutil
 import sys
-import uuid
 import xml.etree.ElementTree as ET
+
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import udf, col, lit
+from pyspark.sql.types import StringType
 
 import genmodule
 from genmodule import get_address
-from pyspark.sql import SparkSession
-from pyspark.sql.functions import udf
-from pyspark.sql.types import StringType
 
-# Remove the security manager setting that's causing problems
+config = configparser.ConfigParser()
+config.read('config.properties')
+
+# Environment setup
 os.environ['JAVA_TOOL_OPTIONS'] = '-Djavax.security.auth.useSubjectCredsOnly=true'
-
-# Standard PySpark environment setup
 os.environ['PYSPARK_PYTHON'] = sys.executable
 os.environ['PYSPARK_DRIVER_PYTHON'] = sys.executable
 
 # Create SparkSession without security manager flags
-spark = SparkSession.builder.appName("MyApp").master("local[*]").config("spark.driver.host", "localhost"). \
-	config("spark.sql.debug.maxToStringFields", 200).getOrCreate()
+spark = SparkSession.builder \
+	.appName("MyApp") \
+	.master("local[*]") \
+	.config("spark.driver.host", "localhost") \
+	.config("spark.sql.debug.maxToStringFields", 200) \
+	.getOrCreate()
 
 genmodule.logger("INFO", f"Spark Session Created with Application ID: {spark.sparkContext.applicationId}")
 
-ID = "2679af12-d49a-4bcc-8a7a-ce32eb22b9d5"
-BASE_FOLDER = '/Users/ramsa005/Desktop/Staples/Projects/Git/accountSearch/datafiles/'
-INCOMING_FOLDER = BASE_FOLDER + "incoming/"  # using a temporary directory
-TEMP_FOLDER = BASE_FOLDER + "temp/"
-OUTPUT_FOLDER = BASE_FOLDER + "output/"  # using a temporary directory
-PROCESS_FOLDER = BASE_FOLDER + "process/"
+ID = config['DEFAULT']['ID']
+BASE_FOLDER = config['FOLDER']['BASE_FOLDER']
+INCOMING_FOLDER = os.path.join(BASE_FOLDER, config['FOLDER']['INCOMING_FOLDER'])
+TEMP_FOLDER = os.path.join(BASE_FOLDER, config['FOLDER']['TEMP_FOLDER'])
+OUTPUT_FOLDER = os.path.join(BASE_FOLDER, config['FOLDER']['OUTPUT_FOLDER'])
+PROCESS_FOLDER = os.path.join(BASE_FOLDER, config['FOLDER']['PROCESS_FOLDER'])
+
+SNOWFLAKE_USER = config['DATABASE']['SNOWFLAKE_USER']
+SNOWFLAKE_PASSWORD = config['DATABASE']['SNOWFLAKE_PASSWORD']
+SNOWFLAKE_ACCOUNT = config['DATABASE']['SNOWFLAKE_ACCOUNT']
+SNOWFLAKE_WAREHOUSE = config['DATABASE']['SNOWFLAKE_WAREHOUSE']
+SNOWFLAKE_DATABASE = config['DATABASE']['SNOWFLAKE_DATABASE']
+SNOWFLAKE_SCHEMA = config['DATABASE']['SNOWFLAKE_SCHEMA']
+SNOWFLAKE_STAGE = config['DATABASE']['SNOWFLAKE_STAGE']
+TARGET_TABLE = config['DATABASE']['TARGET_TABLE']
 
 # Replace these variables with your Snowflake credentials and config
-SNOWFLAKE_USER = 'YOUR_USERNAME'
-SNOWFLAKE_PASSWORD = 'YOUR_PASSWORD'
-SNOWFLAKE_ACCOUNT = 'YOUR_ACCOUNT'
-SNOWFLAKE_WAREHOUSE = 'YOUR_WAREHOUSE'
-SNOWFLAKE_DATABASE = 'YOUR_DATABASE'
-SNOWFLAKE_SCHEMA = 'YOUR_SCHEMA'
-SNOWFLAKE_STAGE = 'YOUR_STAGE'  # an internal or external stage name (e.g., '@my_stage')
-TARGET_TABLE = 'YOUR_TARGET_TABLE'
 
+output_data = [
+	['BU_REC_ID', 'BU_REC_ID'],
+	['SRC_ID', 'SRC_ID'],
+	['SRC_TP_CD', 'SRC_TP_CD'],
+	['SRC_INPUT_FILE_NAME', 'SRC_INPUT_FILE_NAME'],
+	['PER_PREFIX', 'SRC_PER_PREFIX'],
+	['PER_FIRST_NAME', 'SRC_PER_FIRST_NAME'],
+	['PER_MIDDLE_NAME', 'SRC_PER_MIDDLE_NAME'],
+	['PER_LAST_NAME', 'SRC_PER_LAST_NAME'],
+	['PER_SUFFIX', 'SRC_PER_SUFFIX'],
+	['PER_ADDRESS_LINE_1', 'SRC_PER_ADDRESS_LINE_1'],
+	['PER_ADDRESS_LINE_2', 'SRC_PER_ADDRESS_LINE_2'],
+	['PER_ADDRESS_LINE_3', 'SRC_PER_ADDRESS_LINE_3'],
+	['PER_CITY', 'SRC_PER_CITY'],
+	['PER_STATE', 'SRC_PER_STATE'],
+	['PER_ZIP_CODE', 'SRC_PER_ZIP_CODE'],
+	['PER_ZIP_SUPP', 'SRC_PER_ZIP_SUPP'],
+	['PER_COUNTRY', 'SRC_PER_COUNTRY'],
+	['PER_PHONE_NUMBER', 'SRC_PER_PHONE_NUMBER'],
+	['PER_FAX_NUMBER', 'SRC_PER_FAX_NUMBER'],
+	['PER_EMAIL', 'SRC_PER_EMAIL'],
+	# ['STD_PER_ADDRESS_LINE_1', 'STD_PER_ADDRESS_LINE_1'],
+	# ['STD_PER_ADDRESS_LINE_2', 'STD_PER_ADDRESS_LINE_2'],
+	# ['STD_PER_CITY', 'STD_PER_CITY'],
+	# ['STD_PER_STATE', 'STD_PER_STATE'],
+	# ['STD_PER_ZIP_CODE', 'STD_PER_ZIP_CODE'],
+	# ['STD_PER_ZIP_SUPP', 'STD_PER_ZIP_SUPP'],
+	# ['STD_PER_COUNTRY', 'STD_PER_COUNTRY'],
+	# ['STD_PER_PHONE_NUMBER', 'STD_PER_PHONE_NUMBER'],
+	# ['STD_PER_FAX_NUMBER', 'STD_PER_FAX_NUMBER'],
+	['ORG_NAME', 'SRC_ORG_NAME'],
+	['ORG_ADDRESS_LINE_1', 'SRC_ORG_ADDRESS_LINE_1'],
+	['ORG_ADDRESS_LINE_2', 'SRC_ORG_ADDRESS_LINE_2'],
+	['ORG_ADDRESS_LINE_3', 'SRC_ORG_ADDRESS_LINE_3'],
+	['ORG_CITY', 'SRC_ORG_CITY'],
+	['ORG_STATE', 'SRC_ORG_STATE'],
+	['ORG_ZIP_CODE', 'SRC_ORG_ZIP_CODE'],
+	['ORG_ZIP_SUPP', 'SRC_ORG_ZIP_SUPP'],
+	['ORG_COUNTRY', 'SRC_ORG_COUNTRY'],
+	['ORG_PHONE_NUMBER', 'SRC_ORG_PHONE_NUMBER'],
+	['ORG_FAX_NUMBER', 'SRC_ORG_FAX_NUMBER'],
+	['ORG_WEBSITE', 'SRC_ORG_WEBSITE'],
+	['STD_ORG_NAME', 'STD_ORG_NAME'],
+	['STD_ORG_ADDR1', 'STD_ORG_ADDRESS_LINE_1'],
+	['STD_ORG_ADDR2', 'STD_ORG_ADDRESS_LINE_2'],
+	['STD_ORG_CITY', 'STD_ORG_CITY'],
+	['STD_ORG_COUNTY', 'STD_ORG_COUNTY'],
+	['STD_ORG_STATE', 'STD_ORG_STATE'],
+	['STD_ORG_ZIP', 'STD_ORG_ZIP_CODE'],
+	['STD_ORG_ZIP4', 'STD_ORG_ZIP_SUPP'],
+	['STD_ORG_COUNTRY', 'STD_ORG_COUNTRY'],
+	['STD_ORG_ADDR_LOC_TYPE', 'STD_ORG_ADDR_LOC_TYPE'],
+	['STD_ORG_ADDR_TYPE', 'STD_ORG_ADDR_TYPE'],
+	['STD_ORG_CHECK_DIGIT', 'STD_ORG_CHECK_DIGIT'],
+	['STD_ORG_CMRA_CD', 'STD_ORG_CMRA_CD'],
+	['STD_ORG_DLVRY_POINT_CD', 'STD_ORG_DLVRY_POINT_CD'],
+	['STD_ORG_DPV_NOTE', 'STD_ORG_DPV_NOTE'],
+	['STD_ORG_DPV_STATUS', 'STD_ORG_DPV_STATUS'],
+	['STD_ORG_ELOT', 'STD_ORG_ELOT'],
+	['STD_ORG_ELOT_ORDER', 'STD_ORG_ELOT_ORDER'],
+	['STD_ORG_FAULT_CD', 'STD_ORG_FAULT_CD'],
+	['STD_ORG_FAULT_DESC', 'STD_ORG_FAULT_DESC'],
+	['STD_ORG_LAT', 'STD_ORG_LAT'],
+	['STD_ORG_LONG', 'STD_ORG_LONG'],
+	['STD_ORG_NOTES', 'STD_ORG_NOTES'],
+	['STD_ORG_PRIM_RANGE', 'STD_ORG_PRIM_RANGE'],
+	['STD_ORG_RESIDENT_DLVRY_IND', 'STD_ORG_RESIDENT_DLVRY_IND'],
+	['STD_ORG_ROUTE_CD', 'STD_ORG_ROUTE_CD'],
+	['STD_ORG_STREET_TYPE', 'STD_ORG_STREET_TYPE'],
+	['STD_ORG_PHONE', 'STD_ORG_PHONE_NUMBER'],
+	['STD_ORG_AREACD', 'STD_ORG_AREACD'],
+	['CREATED_DT', 'CREATED_DT'],
+	['LAST_UPDATED_DT', 'LAST_UPDATED_DT'],
+	['LAST_UPDATED_USER', 'LAST_UPDATED_USER']
+]
 
-def generate_guid():
-	return str(uuid.uuid4())
+# ['ORG_MATCH_STATUS', 'ORG_MATCH_STATUS'],
+# ['ORG_ID'],
+# ['ORG_MATCH_CONFIDENCE'],
+# ['ORG_INTRA_DUPE_REC_ID'],
+# ['BU_ORG_MATCH_CONFIDENCE'],
+# ['BU_PERSON_MATCH_CONFIDENCE']
+# ['PERSON_MATCH_STATUS'],
+# ['PERSON_ID'],
+# ['PERSON_MATCH_CONFIDENCE'],
+# ['PERSON_INTRA_DUPE_REC_ID'],
+print(output_data)
 
 
 def process_file(pv_filename):
 	src_file = INCOMING_FOLDER + pv_filename
 	dst_file = PROCESS_FOLDER + pv_filename
-	genmodule.logger("INFO",f"Source File: {src_file}")
-	genmodule.logger("INFO",f"Target File: {dst_file}")
+	genmodule.logger("INFO", f"Source File: {src_file}")
+	genmodule.logger("INFO", f"Target File: {dst_file}")
+	ld_created_date = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+	ls_user_name = os.getlogin()
 
-	ldf_incoming = spark.read.csv(src_file, header=True, inferSchema=True)
-	ldf_process = ldf_incoming.withColumn("BU_REC_ID", udf_uuid()).fillna('')
+	ldf_incoming = spark.read.csv(src_file, header=True, inferSchema=True)  #.limit(50)
+	ldf_process = (ldf_incoming.withColumn("BU_REC_ID", udf_uuid())
+				   .withColumn('SRC_INPUT_FILE_NAME', lit(pv_filename))
+				   .withColumn("CREATED_DT", lit(ld_created_date))
+				   .withColumn("LAST_UPDATED_DT", lit(ld_created_date))
+				   .withColumn("LAST_UPDATED_USER", lit(ls_user_name))
+				   .fillna(''))
 
 	ldf_processed = ldf_process.rdd.mapPartitions(call_api_per_record)
 	df_process = spark.createDataFrame(ldf_processed)
-	df_processed = df_process.limit(300)
+	df_processed = df_process
 
 	genmodule.logger("INFO", "Records with Rec ID, Address, Email, and Phone Standardization ...")
-	df_processed.show(truncate=False)
+	df_processed.show(truncate=False, )
+	df_processed = df_process.select([col(c[0]).alias(c[1]) for c in output_data])  #.limit(300)
 
 	if os.path.exists(dst_file):
 		shutil.rmtree(dst_file)
@@ -71,7 +171,7 @@ def process_file(pv_filename):
 
 def call_api_per_record(records):
 	import requests
-	base_url = "http://eas01-sapds-bu-pe.az.staples.com/DataServices/servlet/webservices?ver=2.1"
+	base_url = config['SOAP']['URL_ECH_CLEANSER']
 
 	headers = {"Content-Type": "text/xml; charset=utf-8", "SOAPAction": "service=cleanseAddress"}
 	for record in records:
@@ -112,10 +212,10 @@ def call_api_per_record(records):
 		ls_soap_body = ""
 		if len(ls_per_first_name) > 0:
 			ls_reqtype = 'CONTACT'
-			ls_soap_body = ("<soapenv:Envelope xmlns:soapenv='http://schemas.xmlsoap.org/soap/envelope/' "
-							" xmlns:tid='http://schemas.staples.com/eai/tid02' xmlns:head='http://schemas.staples.com/ech/ecis/header' "
-							" xmlns:add='http://schemas.staples.com/ech/eas/addrservice' xmlns:add1='http://schemas.staples.com/ech/eas/address' "
-							" xmlns:phon='http://schemas.staples.com/ech/eas/phone'  xmlns:ema='http://schemas.staples.com/ech/eas/email'>"
+			ls_soap_body = (f"<soapenv:Envelope xmlns:soapenv='{config['SOAP']['URL_SOAP_ENV_SRV']}' "
+							f" xmlns:tid='http://schemas.staples.com/eai/tid02' xmlns:head='{config['SOAP']['URL_ECH_HDR_SRV']}'"
+							f" xmlns:add='{config['SOAP']['URL_ECH_ADDR_SRV']}' xmlns:add1='http://schemas.staples.com/ech/eas/address' "
+							f" xmlns:phon='{config['SOAP']['URL_ECH_PHONE_SRV']}'  xmlns:ema='{config['SOAP']['URL_ECH_EMAIL_SRV']}'>"
 							f"    <soapenv:Header>"
 							f"        <tid:SplsTID> </tid:SplsTID>"
 							f"    </soapenv:Header>"
@@ -148,10 +248,10 @@ def call_api_per_record(records):
 							f"    </soapenv:Body>"
 							f"</soapenv:Envelope>")
 		else:
-			ls_soap_body = ("<soapenv:Envelope xmlns:soapenv='http://schemas.xmlsoap.org/soap/envelope/' "
-							" xmlns:tid='http://schemas.staples.com/eai/tid02' xmlns:head='http://schemas.staples.com/ech/ecis/header' "
-							" xmlns:add='http://schemas.staples.com/ech/eas/addrservice' xmlns:add1='http://schemas.staples.com/ech/eas/address' "
-							" xmlns:phon='http://schemas.staples.com/ech/eas/phone'  xmlns:ema='http://schemas.staples.com/ech/eas/email'>"
+			ls_soap_body = (f"<soapenv:Envelope xmlns:soapenv='{config['SOAP']['URL_SOAP_ENV_SRV']}' "
+							f" xmlns:tid='http://schemas.staples.com/eai/tid02' xmlns:head='{config['SOAP']['URL_ECH_HDR_SRV']}' "
+							f" xmlns:add='{config['SOAP']['URL_ECH_ADDR_SRV']}' xmlns:add1='http://schemas.staples.com/ech/eas/address' "
+							f" xmlns:phon='{config['SOAP']['URL_ECH_PHONE_SRV']}'  xmlns:ema='{config['SOAP']['URL_ECH_EMAIL_SRV']}'>"
 							f"    <soapenv:Header>"
 							f"        <tid:SplsTID> </tid:SplsTID>"
 							f"    </soapenv:Header>"
@@ -184,11 +284,12 @@ def call_api_per_record(records):
 		# Define the namespace mapping for the prefixes used in the XML.
 		namespaces = {
 			'soapenv': 'http://schemas.xmlsoap.org/soap/envelope/',
-			'ns1': 'http://schemas.staples.com/ech/eas/addrservice',
-			'ns2': 'http://schemas.staples.com/ech/ecis/header',
-			'ns3': 'http://schemas.staples.com/ech/eas/phone',
+			'ns1': config['SOAP']['URL_ECH_ADDR_SRV'],
+			'ns2': config['SOAP']['URL_ECH_HDR_SRV'],
+			'ns2': config['SOAP']['URL_ECH_HDR_SRV'],
+			'ns3': config['SOAP']['URL_ECH_PHONE_SRV'],
 			'ns4': 'http://schemas.staples.com/ech/eas/address',
-			'ns5': 'http://schemas.staples.com/ech/eas/email'
+			'ns5': config['SOAP']['URL_ECH_EMAIL_SRV']
 		}
 
 		ld_record = record.asDict()
@@ -289,8 +390,7 @@ def call_api_per_record(records):
 # 	)
 # 	return conn
 
-
-udf_uuid = udf(generate_guid, StringType())
+udf_uuid = udf(genmodule.generate_guid, StringType())
 file_name = "BU_Bulk_Match_Input_2.0_Test.csv." + ID
 process_file(file_name)
 spark.stop()

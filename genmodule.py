@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime
 
 
@@ -15,9 +16,12 @@ def get_address(pd_addr, pd_dataset, pn_spaces):
 			ld_addr[ls_retattr] = str(pd_addr.get(ls_attr) or "")
 
 	return ld_addr
+def generate_guid():
+	return str(uuid.uuid4())
 
 
-def logger(ps_msg_type, ps_logmessge ):
+
+def logger(ps_msg_type, ps_logmessge):
 	"""
     Function to log messages
     :param logmessge: Message to be logged

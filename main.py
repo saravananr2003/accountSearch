@@ -1,3 +1,4 @@
+import configparser
 import os
 import shutil
 import tempfile
@@ -5,15 +6,18 @@ import uuid
 
 from flask import Flask, request, redirect, url_for, render_template_string
 
+
+config = configparser.ConfigParser()
+config.read('config.properties')
+
 # Flask app setup
 app = Flask(__name__)
-app.config['BASE_FOLDER'] = '/Users/ramsa005/Desktop/Staples/Projects/Git/accountSearch/datafiles/'
-app.config['INCOMING_FOLDER'] = app.config['BASE_FOLDER'] + "incoming/"  # using a temporary directory
-app.config['TEMP_FOLDER'] = app.config['BASE_FOLDER'] + "temp/"
-app.config['OUTPUT_FOLDER'] = app.config['BASE_FOLDER'] + "output/"  # using a temporary directory
-app.config['PROCESS_FOLDER'] = app.config['BASE_FOLDER'] + "process/"
+app.config['BASE_FOLDER'] = config['DEFAULT']['BASE_FOLDER']
+app.config['INCOMING_FOLDER'] = os.path.join(app.config['BASE_FOLDER'], config['DEFAULT']['INCOMING_FOLDER'])
+app.config['TEMP_FOLDER'] = os.path.join(app.config['BASE_FOLDER'], config['DEFAULT']['TEMP_FOLDER'])
+app.config['OUTPUT_FOLDER'] = os.path.join(app.config['BASE_FOLDER'], config['DEFAULT']['OUTPUT_FOLDER'])
+app.config['PROCESS_FOLDER'] = os.path.join(app.config['BASE_FOLDER'], config['DEFAULT']['PROCESS_FOLDER'])
 app.config['UPLOAD_FOLDER'] = tempfile.gettempdir()
-
 
 
 # A simple upload form
@@ -52,6 +56,7 @@ def upload_file():
 		inc_file_path = os.path.join(app.config['INCOMING_FOLDER'], output_filename)
 		prcs_file_path = os.path.join(app.config['PROCESS_FOLDER'], output_filename)
 		message = load_file_to_incoming(tmp_file_path, inc_file_path)
+		# process_incoming_file.process_file(inc_file_path, prcs_file_path)
 
 		# process_file(inc_file_path, prcs_file_path)
 
@@ -73,11 +78,10 @@ def upload_file():
 @app.route('/process', methods=['POST'])
 def load_file_to_incoming(pv_src_file, pv_dst_file):
 	# global src_file_path, dst_file_path
+	# Save the file to a temporary location
+	src_file_path = pv_src_file
+	dst_file_path = pv_dst_file
 	try:
-		# Save the file to a temporary location
-		src_file_path = pv_src_file
-		dst_file_path = pv_dst_file
-
 		shutil.copy(src_file_path, dst_file_path)
 		message = "File Successfully loaded into the incoming location"
 	except Exception as e:

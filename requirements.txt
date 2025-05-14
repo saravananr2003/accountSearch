@@ -1,0 +1,3 @@
+pyspark
+requests
+snowflake-connector-python
