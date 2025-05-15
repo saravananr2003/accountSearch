@@ -5,11 +5,10 @@ import shutil
 import sys
 
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import udf, col, lit
+from pyspark.sql.functions import udf, col, lit, concat_ws
 from pyspark.sql.types import StringType
 
 import genmodule
-import process_tamr_llm
 
 # Read config and setup environment
 config = genmodule.read_config()
@@ -159,6 +158,32 @@ def standardize_data(pv_filename):
 	df_processed.write.csv(dst_file, header=True, mode='overwrite')
 	genmodule.logger("INFO", "Output file written on Process folder...")
 
+def process_tamr(pv_filename):
+	src_file = os.path.join(FOLDERS['process'], pv_filename)
+	dst_file = os.path.join(FOLDERS['output'], pv_filename)
+	genmodule.logger("INFO", f"Starting to process Source File: {src_file} to Target File: {dst_file}")
+	ldf_incoming = spark.read.csv(src_file, header=True, inferSchema=True).limit(20)
+	ldf_process = ldf_incoming.withColumn("STD_ORG_ZIP9",
+										  concat_ws("-", col("STD_ORG_ZIP_CODE"), col("STD_ORG_ZIP_SUPP"))) \
+		.fillna('') \
+		.repartition(10)
+
+	genmodule.logger("INFO", "Records Before TAMR Process ...")
+	ldf_process.sort("SRC_ID").show(truncate=False)
+
+	ldf_processed = ldf_process.rdd.mapPartitions(genmodule.call_tamr_api)
+	df_processed = spark.createDataFrame(ldf_processed).repartition(1)
+
+	genmodule.logger("INFO", "Records after TAMR Process ...")
+	df_processed.sort("SRC_ID").show(truncate=False)
+
+	if os.path.exists(dst_file):
+		shutil.rmtree(dst_file)
+
+	genmodule.logger("INFO", "Removed Existing Directory, Starting to populate output file in output folder...")
+	df_processed.write.csv(dst_file, header=True, mode='overwrite')
+	genmodule.logger("INFO", "Output file written on Output folder...")
+
 
 udf_uuid = udf(genmodule.generate_guid, StringType())
 ID = config['DEFAULT']['ID']
@@ -166,4 +191,7 @@ file_name = "BU_Bulk_Match_BASE_ADDRESS_INPUT_250415.csv." + ID
 standardize_data(file_name)
 genmodule.logger("INFO", "Standardization Process Completed...")
 
+genmodule.logger("INFO", "Starting to process the file with Tamr LLM API...")
+process_tamr(file_name)
+genmodule.logger("INFO", "Tamr LLM API Process Completed...")
 spark.stop()

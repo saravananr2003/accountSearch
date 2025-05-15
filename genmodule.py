@@ -1,6 +1,10 @@
+import json
 import uuid
 from datetime import datetime
 import xml.etree.ElementTree as ET
+import requests
+from pyspark import Row
+
 
 def read_config():
 	import configparser
@@ -26,6 +30,80 @@ def get_address(pd_addr, pd_dataset, pn_spaces):
 
 def generate_guid():
 	return str(uuid.uuid4())
+
+
+def call_tamr_api(records):
+	config = read_config()
+	base_url = config['TAMR']['ACCOUNTS_MATCH_API_URL']
+	base_url = 'https://staples-prod-2.tamrfield.com/llm/api/v1/projects/2-B Site Mastering v2:match?type=clusters'
+	print (f"Base URL : {base_url}")
+
+	headers = {"Content-Type": "application/json", "Accept": "application/json",
+			   "Authorization": config['TAMR']['ACCOUNTS_MATCH_API_TOKEN']}
+
+	cluster_ids = []
+	avg_match_probs = []
+	for record in records:
+		payload = create_api_payload(record)
+		# genmodule.logger("INFO",f"Processing Rec ID: {record['BU_REC_ID']}")
+		ld_dict = {}
+		try:
+			response = requests.post(base_url, headers=headers, json=payload, timeout=30)
+		except requests.exceptions.RequestException as e:
+			logger("ERROR", f"Request failed: {e}")
+			continue
+
+		if response.status_code == 200:
+			lj_response = response.text.strip().splitlines()
+			parsed = [json.loads(line) for line in lj_response if line.strip()]
+			for d in parsed:
+				base = record.asDict()
+				# add new keys
+				base["ORG_ID"] = d.get("clusterId")
+				base["ORG_MATCH_CONFIDENCE"] = d.get("avgMatchProb")
+				yield Row(**base)
+		else:
+			logger("ERROR", f"Error: {response.status_code} - {response.text}")
+			continue
+
+
+def create_api_payload(lr_row):
+	ls_rec_id = str(lr_row['BU_REC_ID'])
+	ls_org_name = str(lr_row['STD_ORG_NAME']).upper()
+	ls_org_zip = str(lr_row['STD_ORG_ZIP_CODE'])
+	ls_org_zip4 = str(lr_row['STD_ORG_ZIP_SUPP'])
+	ls_org_phone = str(lr_row['STD_ORG_PHONE_NUMBER'])
+	ls_org_areacd = str(lr_row['STD_ORG_AREACD'])
+	payload = {
+		"recordId": f"{ls_rec_id}",
+		"record": {
+			"site_address_1": [f"{lr_row['STD_ORG_ADDRESS_LINE_1']}"],
+			"site_address_2": [f"{lr_row['STD_ORG_ADDRESS_LINE_2']}"],
+			"site_address_full": [f"{lr_row['STD_ORG_ADDRESS_LINE_1']} {lr_row['STD_ORG_ADDRESS_LINE_2']}"],
+			"site_city": [f"{lr_row['STD_ORG_CITY']}"],
+			"site_country": [f"{lr_row['STD_ORG_COUNTRY']}"],
+			"site_zip5": [f"{ls_org_zip}"],
+			"site_zip9": [f"{ls_org_zip}-{ls_org_zip4}"],
+			"site_phone_7": [f"{ls_org_phone[:7]}"],
+			"site_phone_areacode": [f"{ls_org_areacd}"],
+			"site_state": [f"{lr_row['STD_ORG_STATE']}"],
+			"site_fax": None,
+			"business_name": [f"{ls_org_name}"],
+			"original_source_and_ID": [f"{lr_row['SRC_TP_CD']}:::{lr_row['SRC_ID']}"],
+			"site_zip4": [f"{ls_org_zip4}"],
+			"phone_number_most_frequent": [f"{ls_org_phone}"],
+			"site_phone_full_number": [f"{ls_org_phone}"],
+			"EMAIL": None,
+			"site_phone_number_10dig": [f"{ls_org_phone}"],
+			"COMPANY_NAME": [f"{ls_org_phone}"],
+			"site_phone_6": [f"{ls_org_phone[:6]}"],
+			"ml_company_name": [f"{ls_org_name.replace(' ', '')}"],
+			"ml_company_first_word": [f"{ls_org_name.split()[0]}"],
+			"site_address_1_original": [f"{lr_row['STD_ORG_ADDRESS_LINE_1']}"],
+			"business_name_gr": [f"{ls_org_name}"]
+		}
+	}
+	return payload
 
 
 def standardize_records(records):
