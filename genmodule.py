@@ -1,16 +1,110 @@
 import json
+import os
+import shutil
 import uuid
-from datetime import datetime
 import xml.etree.ElementTree as ET
+from datetime import datetime
+
 import requests
+import snowflake
 from pyspark import Row
+from snowflake.connector.pandas_tools import write_pandas
+
+import pandas as pd
+import configparser
 
 
 def read_config():
-	import configparser
 	properties = configparser.ConfigParser()
 	properties.read('config.properties')
 	return properties
+
+
+def logger(ps_msg_type, ps_logmessge):
+	"""
+    Function to log messages
+    :param logmessge: Message to be logged
+    :param msgtype: Type of message (INFO, ERROR, etc.)
+    """
+	# Implement your logging logic here
+	print(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - {ps_msg_type}: {ps_logmessge}")
+
+
+def write_df_2_file(df_processed, dst_file, file_type="CSV"):
+	"""
+    Writes processed dataframe to CSV file, handling existing directory cleanup.
+    Args:
+        df_processed: Spark DataFrame to write
+        dst_file (str): Destination file path
+        folder_type (str): Type of folder for logging purposes
+    """
+	try:
+		if os.path.exists(dst_file):
+			shutil.rmtree(dst_file)
+			logger("INFO", "Removed Existing Directory")
+
+		logger("INFO", f"Starting to populate output file {dst_file} folder...")
+		if file_type == "CSV":
+			df_processed.write.csv(dst_file, header=True, mode='overwrite')
+		elif file_type == "PARQUET":
+			df_processed.write.parquet(dst_file, mode='overwrite')
+		elif file_type == "JSON":
+			df_processed.write.json(dst_file, mode='overwrite')
+		elif file_type == "ORC":
+			df_processed.write.orc(dst_file, mode='overwrite')
+		elif file_type == "AVRO":
+			df_processed.write.format("avro").save(dst_file, mode='overwrite')
+		elif file_type == "TAB":
+			df_processed.write.csv(dst_file, sep="\t", header=True, mode='overwrite')
+		elif file_type == "SNOWFLAKE":
+			write_2_snowflake(df_processed, "RAM_TAMR_ACCOUNTS_DATA")
+
+	except Exception as e:
+		logger("ERROR", f"Failed to write data to {dst_file}: {str(e)}")
+		raise
+
+
+def snowflake_connection(config):
+	conn = snowflake.connector.connect(
+		user=config['DATABASE']['SNOWFLAKE_USER'],
+		password=config['DATABASE']['SNOWFLAKE_PASSWORD'],
+		account=config['DATABASE']['SNOWFLAKE_ACCOUNT'],
+		warehouse=config['DATABASE']['SNOWFLAKE_WAREHOUSE'],
+		database=config['DATABASE']['SNOWFLAKE_DATABASE'],
+		schema=config['DATABASE']['SNOWFLAKE_SCHEMA'],
+		role=config['DATABASE']['SNOWFLAKE_ROLE']
+	)
+	if conn.is_valid():
+		return conn
+	else:
+		return None
+
+
+def write_2_snowflake(df, table_name):
+	config = read_config()
+	pd_df = pd.DataFrame(df.collect(), columns=df.columns)
+	conn = snowflake_connection(config)
+	if conn is None:
+		logger("ERROR", "Failed to connect to Snowflake.")
+		return
+
+	logger("INFO", f"Connected to Snowflake account {config['DATABASE']['SNOWFLAKE_ACCOUNT']}.")
+	print(f"Connection to Snowflake is  {conn.is_valid()}")
+	try:
+		success, nchunks, nrows, _ = write_pandas(conn, pd_df, table_name,
+												  database=config['DATABASE']['SNOWFLAKE_DATABASE'],
+												  schema=config['DATABASE']['SNOWFLAKE_SCHEMA'])
+		if success:
+			logger("INFO", f"Data written to Snowflake table {table_name} successfully.")
+		else:
+			logger("ERROR", f"Failed to write data to Snowflake table {table_name}.")
+	except Exception as e:
+		logger("ERROR", f"Error writing to Snowflake: {str(e)}")
+		raise
+	finally:
+		conn.close()
+		logger("INFO", "Snowflake connection closed.")
+
 
 def get_address(pd_addr, pd_dataset, pn_spaces):
 	ld_addr = {}
@@ -36,35 +130,37 @@ def call_tamr_api(records):
 	config = read_config()
 	base_url = config['TAMR']['ACCOUNTS_MATCH_API_URL']
 	base_url = 'https://staples-prod-2.tamrfield.com/llm/api/v1/projects/2-B Site Mastering v2:match?type=clusters'
-	print (f"Base URL : {base_url}")
+	headers = {
+		"Content-Type": "application/json",
+		"Accept": "application/json",
+		"Authorization": config['TAMR']['ACCOUNTS_MATCH_API_TOKEN']
+	}
 
-	headers = {"Content-Type": "application/json", "Accept": "application/json",
-			   "Authorization": config['TAMR']['ACCOUNTS_MATCH_API_TOKEN']}
-
-	cluster_ids = []
-	avg_match_probs = []
 	for record in records:
-		payload = create_api_payload(record)
-		# genmodule.logger("INFO",f"Processing Rec ID: {record['BU_REC_ID']}")
-		ld_dict = {}
+		base = record.asDict()
 		try:
+			payload = create_api_payload(record)
 			response = requests.post(base_url, headers=headers, json=payload, timeout=30)
+			if response.status_code == 200:
+				lj_response = response.text.strip().splitlines()
+				parsed = ([json.loads(line) for line in lj_response if line.strip()])
+
+				if len(parsed) > 0:
+					for d in parsed:
+						base["ORG_ID"] = d.get("clusterId")
+						base["ORG_MATCH_CONFIDENCE"]: float = d.get("avgMatchProb")
+						yield Row(**base)
+				else:
+					base["ORG_ID"] = None
+					base["ORG_MATCH_CONFIDENCE"]: float = None
+					yield Row(**base)
+			else:
+				logger("ERROR", f"Error: {response.status_code} - {response.text}")
 		except requests.exceptions.RequestException as e:
 			logger("ERROR", f"Request failed: {e}")
-			continue
-
-		if response.status_code == 200:
-			lj_response = response.text.strip().splitlines()
-			parsed = [json.loads(line) for line in lj_response if line.strip()]
-			for d in parsed:
-				base = record.asDict()
-				# add new keys
-				base["ORG_ID"] = d.get("clusterId")
-				base["ORG_MATCH_CONFIDENCE"] = d.get("avgMatchProb")
-				yield Row(**base)
-		else:
-			logger("ERROR", f"Error: {response.status_code} - {response.text}")
-			continue
+			base["ORG_ID"] = None
+			base["ORG_MATCH_CONFIDENCE"]: float = None
+			yield Row(**base)
 
 
 def create_api_payload(lr_row):
@@ -287,13 +383,3 @@ def standardize_records(records):
 		else:
 			logger("ERROR", f"{ps_bu_rec_id}  - {ls_soap_body} - Response : {response.status_code}")
 		yield ld_record
-
-
-def logger(ps_msg_type, ps_logmessge):
-	"""
-    Function to log messages
-    :param logmessge: Message to be logged
-    :param msgtype: Type of message (INFO, ERROR, etc.)
-    """
-	# Implement your logging logic here
-	print(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - {ps_msg_type}: {ps_logmessge}")

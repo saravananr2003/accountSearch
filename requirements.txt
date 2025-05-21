@@ -1,3 +1,5 @@
-pyspark
-requests
-snowflake-connector-python
+pyspark~=3.5.5
+requests~=2.32.3
+Flask~=3.1.0
+pandas~=2.2.3
+pysnowflake~=0.1.3
