@@ -57,7 +57,7 @@ def write_df_2_file(df_processed, dst_file, file_type="CSV"):
 		elif file_type == "TAB":
 			df_processed.write.csv(dst_file, sep="\t", header=True, mode='overwrite')
 		elif file_type == "SNOWFLAKE":
-			write_2_snowflake(df_processed, "RAM_TAMR_ACCOUNTS_DATA")
+			write_2_snowflake(df_processed, "RAM_TAMR_ACCOUNTS_DATA", "overwrite")
 
 	except Exception as e:
 		logger("ERROR", f"Failed to write data to {dst_file}: {str(e)}")
@@ -80,10 +80,14 @@ def snowflake_connection(config):
 		return None
 
 
-def write_2_snowflake(df, table_name):
+def write_2_snowflake(df, table_name, mode="append"):
 	config = read_config()
 	pd_df = pd.DataFrame(df.collect(), columns=df.columns)
 	conn = snowflake_connection(config)
+
+
+	lb_overwrite = True if mode == "overwrite" else False
+
 	if conn is None:
 		logger("ERROR", "Failed to connect to Snowflake.")
 		return
@@ -93,7 +97,9 @@ def write_2_snowflake(df, table_name):
 	try:
 		success, nchunks, nrows, _ = write_pandas(conn, pd_df, table_name,
 												  database=config['DATABASE']['SNOWFLAKE_DATABASE'],
-												  schema=config['DATABASE']['SNOWFLAKE_SCHEMA'])
+												  schema=config['DATABASE']['SNOWFLAKE_SCHEMA'],
+												  overwrite=lb_overwrite
+												  )
 		if success:
 			logger("INFO", f"Data written to Snowflake table {table_name} successfully.")
 		else:
@@ -129,7 +135,6 @@ def generate_guid():
 def call_tamr_api(records):
 	config = read_config()
 	base_url = config['TAMR']['ACCOUNTS_MATCH_API_URL']
-	base_url = 'https://staples-prod-2.tamrfield.com/llm/api/v1/projects/2-B Site Mastering v2:match?type=clusters'
 	headers = {
 		"Content-Type": "application/json",
 		"Accept": "application/json",

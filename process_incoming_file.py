@@ -112,6 +112,7 @@ output_data = [
 	['LAST_UPDATED_USER', 'LAST_UPDATED_USER']
 ]
 
+
 # ['ORG_MATCH_STATUS', 'ORG_MATCH_STATUS'],
 # ['ORG_ID'],
 # ['ORG_MATCH_CONFIDENCE'],
@@ -126,6 +127,11 @@ print(output_data)
 
 
 def process_incoming_data(pv_filename):
+	literal = [['LAST_UPDATED_DT', (datetime.datetime.now().strftime("%Y-%b-%d %H:%M:%S"))],
+			   ['CREATED_DT', (datetime.datetime.now().strftime("%Y-%b-%d %H:%M:%S"))],
+			   ['LAST_UPDATED_USER', (os.getlogin())],
+			   ['SRC_INPUT_FILE_NAME', (pv_filename)]]
+
 	src_file = os.path.join(FOLDERS['incoming'], pv_filename)
 	dst_file = os.path.join(FOLDERS['process'], pv_filename)
 
@@ -134,14 +140,11 @@ def process_incoming_data(pv_filename):
 	ls_cr_fmt = "yyyy-MMM-dd HH:mm:ss"
 	ls_user_name = os.getlogin()
 
-	ldf_incoming = spark.read.csv(src_file, header=True, inferSchema=True).limit(10)
-	ldf_process = (ldf_incoming.withColumn("BU_REC_ID", udf_uuid())
-				   .withColumn('SRC_INPUT_FILE_NAME', lit(pv_filename))
-				   .withColumn("CREATED_DT", (lit(ld_cr_dt)))
-				   .withColumn("LAST_UPDATED_DT", (lit(ld_cr_dt)))
-				   .withColumn("LAST_UPDATED_USER", lit(ls_user_name))
-				   .fillna(''))
+	ldf_incoming = spark.read.csv(src_file, header=True, inferSchema=True)
+	for rec in literal:
+		ldf_incoming = ldf_incoming.withColumn(rec[0], lit(rec[1]))
 
+	ldf_process = (ldf_incoming.withColumn('BU_REC_ID', udf_uuid()).fillna(''))
 	ldf_processed = ldf_process.rdd.mapPartitions(genmodule.standardize_records)
 	df_process = spark.createDataFrame(ldf_processed)
 
@@ -170,7 +173,6 @@ def process_tamr(pv_filename):
 
 	genmodule.logger("INFO", "Records after TAMR Process ...")
 	df_processed.show(truncate=False)
-
 	genmodule.write_df_2_file(df_processed, dst_file, "CSV")
 	genmodule.logger("INFO", "Records written to file after TAMR Process ...")
 
@@ -181,7 +183,7 @@ def process_tamr(pv_filename):
 
 udf_uuid = udf(genmodule.generate_guid, StringType())
 ID = config['DEFAULT']['ID']
-file_name = "BU_Bulk_Match_BASE_ADDRESS_INPUT_250415.csv." + ID
+file_name = "BU_BM_ADD_250415.csv." + ID
 
 process_incoming_data(file_name)
 genmodule.logger("INFO", "Standardization Process Completed...")
