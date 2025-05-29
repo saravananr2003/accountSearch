@@ -1,3 +1,4 @@
+import configparser
 import json
 import os
 import shutil
@@ -5,13 +6,18 @@ import uuid
 import xml.etree.ElementTree as ET
 from datetime import datetime
 
+import pandas as pd
 import requests
 import snowflake
 from pyspark import Row
 from snowflake.connector.pandas_tools import write_pandas
 
-import pandas as pd
-import configparser
+
+def read_json_config(json_file_name):
+	if not os.path.exists(json_file_name):
+		raise FileNotFoundError(f"Configuration file {json_file_name} not found.")
+	with open(json_file_name, 'r') as f:
+		return json.load(f)
 
 
 def read_config():
@@ -124,7 +130,6 @@ def get_address(pd_addr, pd_dataset, pn_spaces):
 			ld_addr[ls_retattr + "_FAULT_DESC"] = str(pd_addr.find(f'ns4:{ls_attr}', pn_spaces).get('FaultDesc') or "")
 		else:
 			ld_addr[ls_retattr] = str(pd_addr.get(ls_attr) or "")
-
 	return ld_addr
 
 
@@ -214,44 +219,29 @@ def standardize_records(records):
 
 	headers = {"Content-Type": "text/xml; charset=utf-8", "SOAPAction": "service=cleanseAddress"}
 	for record in records:
-		ls_reqtype = 'ACCOUNT'
+		ls_reqtype = process_type
 
 		ps_bu_rec_id = record['BU_REC_ID']
-		ls_per_title = ""
-		ls_per_first_name = str(record['PER_FIRST_NAME'] or '')
-		ls_per_middle_init = str(record['PER_MIDDLE_NAME'] or '')
-		ls_per_last_name = str(record['PER_LAST_NAME'] or '')
-		ls_per_prefix = str(record['PER_PREFIX'] or '')
-		ls_per_suffix = str(record['PER_SUFFIX'] or '')
-		ls_per_addr1 = str(record['PER_ADDRESS_LINE_1'] or '')
-		ls_per_addr2 = str(record['PER_ADDRESS_LINE_2'] or '')
-		ls_per_addr3 = str(record['PER_ADDRESS_LINE_3'] or '')
-		ls_per_city = str(record['PER_CITY'] or '')
-		ls_per_state = str(record['PER_STATE'] or '')
-		ls_per_zip = str(record['PER_ZIP_CODE'] or '')
-		ls_per_zip4 = str(record['PER_ZIP_SUPP'] or '')
-		ls_per_country = str(record['PER_COUNTRY'] or '')
-		ls_per_phone = str(record['PER_PHONE_NUMBER'] or '')
-		ls_per_fax = str(record['PER_FAX_NUMBER'] or '')
-		ls_per_email = str(record['PER_EMAIL'] or '')
-
-		ls_org_name = str(record['ORG_NAME'] or '')
-		ls_org_addr1 = str(record['ORG_ADDRESS_LINE_1'] or '')
-		ls_org_addr2 = str(record['ORG_ADDRESS_LINE_2'] or '')
-		ls_org_addr3 = str(record['ORG_ADDRESS_LINE_3'] or '')
-		ls_org_city = str(record['ORG_CITY'] or '')
-		ls_org_state = str(record['ORG_STATE'] or '')
-		ls_org_zip = str(record['ORG_ZIP_CODE'] or '')
-		ls_org_zip4 = str(record['ORG_ZIP_SUPP'] or '')
-		ls_org_country = str(record['ORG_COUNTRY'] or '')
-		ls_org_phone = str(record['ORG_PHONE_NUMBER'] or '')
-		ls_org_fax = str(record['ORG_FAX_NUMBER'] or '')
-		ls_org_website = str(record['ORG_WEBSITE'] or '')
-
 		ls_soap_body = ""
-		if len(ls_per_first_name) > 0:
-			ls_reqtype = 'CONTACT'
+		if process_type == "CONTACT" :
 			# Create the SOAP body for the request
+			ls_per_title = ""
+			ls_per_first_name = str(record['PER_FIRST_NAME'] or '')
+			ls_per_middle_init = str(record['PER_MIDDLE_NAME'] or '')
+			ls_per_last_name = str(record['PER_LAST_NAME'] or '')
+			ls_per_prefix = str(record['PER_PREFIX'] or '')
+			ls_per_suffix = str(record['PER_SUFFIX'] or '')
+			ls_per_addr1 = str(record['PER_ADDRESS_LINE_1'] or '')
+			ls_per_addr2 = str(record['PER_ADDRESS_LINE_2'] or '')
+			ls_per_addr3 = str(record['PER_ADDRESS_LINE_3'] or '')
+			ls_per_city = str(record['PER_CITY'] or '')
+			ls_per_state = str(record['PER_STATE'] or '')
+			ls_per_zip = str(record['PER_ZIP_CODE'] or '')
+			ls_per_zip4 = str(record['PER_ZIP_SUPP'] or '')
+			ls_per_country = str(record['PER_COUNTRY'] or '')
+			ls_per_phone = str(record['PER_PHONE_NUMBER'] or '')
+			ls_per_fax = str(record['PER_FAX_NUMBER'] or '')
+			ls_per_email = str(record['PER_EMAIL'] or '')
 
 			ls_soap_body = (f"<soapenv:Envelope xmlns:soapenv='{properties['SOAP']['URL_SOAP_ENV_SRV']}' "
 							f" xmlns:tid='http://schemas.staples.com/eai/tid02' xmlns:head='{properties['SOAP']['URL_ECH_HDR_SRV']}'"
@@ -289,6 +279,19 @@ def standardize_records(records):
 							f"    </soapenv:Body>"
 							f"</soapenv:Envelope>")
 		else:
+			ls_org_name = str(record['ORG_NAME'] or '')
+			ls_org_addr1 = str(record['ORG_ADDRESS_LINE_1'] or '')
+			ls_org_addr2 = str(record['ORG_ADDRESS_LINE_2'] or '')
+			ls_org_addr3 = str(record['ORG_ADDRESS_LINE_3'] or '')
+			ls_org_city = str(record['ORG_CITY'] or '')
+			ls_org_state = str(record['ORG_STATE'] or '')
+			ls_org_zip = str(record['ORG_ZIP_CODE'] or '')
+			ls_org_zip4 = str(record['ORG_ZIP_SUPP'] or '')
+			ls_org_country = str(record['ORG_COUNTRY'] or '')
+			ls_org_phone = str(record['ORG_PHONE_NUMBER'] or '')
+			ls_org_fax = str(record['ORG_FAX_NUMBER'] or '')
+			ls_org_website = str(record['ORG_WEBSITE'] or '')
+
 			ls_soap_body = (f"<soapenv:Envelope xmlns:soapenv='{properties['SOAP']['URL_SOAP_ENV_SRV']}' "
 							f" xmlns:tid='http://schemas.staples.com/eai/tid02' xmlns:head='{properties['SOAP']['URL_ECH_HDR_SRV']}' "
 							f" xmlns:add='{properties['SOAP']['URL_ECH_ADDR_SRV']}' xmlns:add1='http://schemas.staples.com/ech/eas/address' "
@@ -349,8 +352,7 @@ def standardize_records(records):
 							['ADDR_LOC_TYPE', 'AddrLocType', 1],
 							['RESIDENT_DLVRY_IND', 'DPV_RsdntlDlvryInd', 1]]
 			person = root.find('.//ns1:Profile', namespaces)
-
-			if ls_reqtype == "ACCOUNT":
+			if process_type == "ACCOUNTS":
 				# Company Name
 				ld_record['STD_ORG_NAME'] = person.find('ns1:OrgNm', namespaces).text
 
@@ -359,6 +361,7 @@ def standardize_records(records):
 				retval = get_address(address, addr_dataset, namespaces)
 				for rc_val in addr_dataset:
 					ld_record['STD_ORG_' + str(rc_val[0])] = retval[str(rc_val[0])]
+
 
 				# Phone Response
 				ld_record['STD_ORG_PHONE'] = str(person.find('ns3:Phone', namespaces).text or "")
@@ -376,15 +379,19 @@ def standardize_records(records):
 				# Address Response
 				address = person.find('.//ns4:Address', namespaces)
 				retval = get_address(address, addr_dataset, namespaces)
-				for rc_val in addr_dataset:
-					rec = str(rc_val[0])
-					ld_record['STD_PER_' + rec] = retval[rec]
-					ld_record['STD_PER_' + rec + '_FAULT_CD'] = retval[rec + '_FAULT_CD']
-					ld_record['STD_PER_' + rec + '_FAULT_DESC'] = retval[rec + '_FAULT_DESC']
-
+				try:
+					for rc_val in addr_dataset:
+						rec = str(rc_val[0])
+						ld_record['STD_PER_' + rec] = retval[rec]
+						ld_record['STD_PER_' + rec + '_FAULT_CD'] = retval[rec + '_FAULT_CD']
+						ld_record['STD_PER_' + rec + '_FAULT_DESC'] = retval[rec + '_FAULT_DESC']
+				except:
+					logger("ERROR", f"Error processing address for {process_type} - {ls_soap_body} - {retval}")
 				# Phone Response
 				ld_record['STD_PER_PHONE'] = (str(person.find('na3:Phone', namespaces).text) or "")
 				ld_record['STD_PER_AREACD'] = str(person.find('ns3:Phone', namespaces).get('PhAreaCd') or "")
 		else:
 			logger("ERROR", f"{ps_bu_rec_id}  - {ls_soap_body} - Response : {response.status_code}")
 		yield ld_record
+
+process_type = read_json_config("BU_ADD_0415.json")["file_config"]["process_type"]

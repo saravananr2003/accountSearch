@@ -68,15 +68,6 @@ def upload_file():
 
 		return message_key
 
-	# Load the file into Snowflake
-	# try:
-	# 	load_file_to_snowflake(temp_file_path, file.filename)
-	# 	message = "File successfully loaded to Snowflake."
-	# except Exception as e:
-	# 	message = f"An error occurred: {e}"
-	# finally:
-	# 	# Optionally, delete the temporary file
-	# 	os.remove(temp_file_path)
 
 	# return message
 	return render_template_string(UPLOAD_FORM)
