@@ -1,0 +1,8 @@
+{
+  "audit_fields": [
+    { "position": 1, "name": "CREATED_DT", "value": "{CURRENT_DATE}" },
+    { "position": 2, "name": "LAST_UPDATED_DT", "value": "{CURRENT_DATE}" },
+    { "position": 3, "name": "LAST_UPDATED_USER", "value": "{CURRENT_USER}" },
+    { "position": 4, "name": "SRC_INPUT_FILE_NAME", "value": "{INPUT_FILE_NAME}" }
+  ]
+  }
